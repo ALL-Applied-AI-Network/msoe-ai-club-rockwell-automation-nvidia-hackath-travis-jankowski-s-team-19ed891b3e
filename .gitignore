@@ -1,0 +1,18 @@
+.env
+# The mentor's briefing: its header says never commit or push it
+CONTEXT.md
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated data, weights and run outputs: never commit (see README "Saving datasets and models")
+data/
+artifacts/
+runs/
+*.pt
+*.onnx
+*.engine
+
+# Starter twin outputs
+fanuc_er4ia_sim/textures/
