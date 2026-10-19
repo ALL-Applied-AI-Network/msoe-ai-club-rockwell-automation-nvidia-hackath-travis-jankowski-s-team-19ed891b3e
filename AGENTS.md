@@ -21,10 +21,19 @@ User instructions take precedence over this file.
 - **Never commit** `data/`, `artifacts/`, `runs/`, weights, `.env` or API keys.
 - **Less code is better.** Prefer a parameter or a small function over a new module or framework.
 
+## Code style
+
+`make lint` enforces this with Ruff, ty and `tests/test_style.py`; `make test` runs it first.
+
+- **Strong types everywhere.** Annotate every parameter, return, class attribute and module constant with modern hints (`list[str]`, `X | None`, `type Alias = ...`, `TypedDict` for fixed-key dicts). Reuse the shared types in `geometry.py` and `detectors.py`; avoid `Any`.
+- **A docstring on every module, class and function**, private and test ones included (Google style): what it does, `Args:`, `Returns:`, `Raises:`, with array shapes and units.
+- **Self-documenting code first:** clear names and small functions. A comment says only what the code cannot: one line, at most 100 characters, never a block (use the docstring).
+- **Formatting** is `ruff format` (120 columns): `make format` applies it, `make lint` checks it.
+
 ## Verify before claiming success
 
 ```bash
-make test        # SmartGrasp pytest + the twin's 33 host tests
+make test        # make lint, then SmartGrasp pytest + the twin's 33 host tests
 make smoke       # end-to-end on the fake twin (~35 min on a Mac)
 ```
 
