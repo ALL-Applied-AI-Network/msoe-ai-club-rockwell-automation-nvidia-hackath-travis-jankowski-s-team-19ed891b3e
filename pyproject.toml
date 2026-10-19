@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff==0.15.6", "ty==0.0.89"]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,3 +27,34 @@ packages = ["smartgrasp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+src = [".", "tests"]
+extend-exclude = ["fanuc_er4ia_sim"]  # the organisers' twin keeps its own style
+
+[tool.ruff.lint]
+# Docstrings (D, DOC), annotations (ANN) and modern hints (UP) are the house style: see AGENTS.md.
+select = ["E", "W", "F", "I", "UP", "ANN", "D", "DOC201", "DOC402", "DOC501"]
+preview = true  # DOC rules are preview; explicit-preview-rules enables only the ones listed above
+explicit-preview-rules = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 100  # docstring and standalone comment lines
+
+[tool.ruff.lint.isort]
+known-first-party = ["smartgrasp"]
+
+[tool.ty.environment]
+python = ".venv"
+extra-paths = ["fanuc_er4ia_sim", "tests"]  # the twin's modules are imported via sys.path at runtime
+
+[tool.ty.src]
+include = ["smartgrasp", "tests", "isaac"]
+
+[[tool.ty.overrides]]
+include = ["isaac/**"]
+rules = { unresolved-import = "ignore" }  # isaacsim, omni and pxr exist only in Isaac's Python

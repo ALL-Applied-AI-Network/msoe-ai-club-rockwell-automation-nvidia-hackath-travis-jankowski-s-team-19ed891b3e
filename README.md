@@ -46,7 +46,7 @@ Needs [uv](https://docs.astral.sh/uv/). Python 3.12 is installed automatically.
 
 ```bash
 uv sync
-make test     # SmartGrasp pytest + the twin's 33 host tests
+make test     # lint (Ruff, ty), SmartGrasp pytest + the twin's 33 host tests
 make smoke    # whole pipeline on the OpenCV "fake twin": data -> train -> evaluate -> deploy
 ```
 

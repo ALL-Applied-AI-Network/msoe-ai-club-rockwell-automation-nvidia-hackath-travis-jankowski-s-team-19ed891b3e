@@ -1,4 +1,6 @@
-"""SmartGrasp: find, grasp and stack cubes with a FANUC ER-4iA using a synthetic-data-trained detector.
+"""SmartGrasp: find, grasp and stack cubes with a FANUC ER-4iA.
+
+The cube detector is trained on synthetic data rendered from the digital twin.
 
 Pipeline (one module per stage, each runnable with `python -m smartgrasp.<stage>`):
     isaac/generate_data.py  render randomized frames from the twin (Isaac Sim)
