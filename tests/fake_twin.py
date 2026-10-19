@@ -14,7 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from smartgrasp.geometry import CameraModel, pixel, twin
+from smartgrasp.geometry import CameraModel, outline, pixel, twin
 from smartgrasp.scene import sample_layout
 
 BGR = {"yellow": (30, 200, 235), "blue": (190, 100, 30), "red": (40, 40, 200), "cap": (120, 210, 230), "tube": (225, 225, 215)}
@@ -29,37 +29,12 @@ STACK = [
 ]
 
 
-def camera_json(cfg=twin.TABLE_CAM):
-    """The twin's table camera in capture_scene.py's camera.json schema (look-at, as cell.camera builds it)."""
-    eye = np.array(cfg["eye"], float)
-    forward = np.array(cfg["look_at"], float) - eye
-    forward /= np.linalg.norm(forward)
-    right = np.cross(forward, cfg["up"])
-    right /= np.linalg.norm(right)
-    m = np.eye(4)
-    m[:3, :3] = [right, np.cross(right, forward), -forward]
-    m[3, :3] = eye
-    w, h = cfg["resolution"]
-    return {
-        "camera": "table",
-        "resolution": [w, h],
-        "focal_length_mm": cfg["focal_length"],
-        "horizontal_aperture_mm": cfg["horiz_aperture"],
-        "vertical_aperture_mm": cfg["horiz_aperture"] * h / w,
-        "camera_to_world": m.tolist(),
-        "table_top_z": twin.TABLE_TOP_Z + twin.SURFACE_DZ,
-        "robot_base_xy": [0.0, 0.0],
-    }
+def camera_json():
+    """The twin's table camera (built as in its own host tests) in capture_scene.py's camera.json schema."""
+    from test_support import camera_model  # fanuc_er4ia_sim/test_support.py
 
-
-def _box_faces(x, y, yaw, length, width, height, z0):
-    """Six faces (4 world points each) of an upright box standing on z0."""
-    c, s = np.cos(np.radians(yaw)), np.sin(np.radians(yaw))
-    corners = [(x + c * a - s * b, y + s * a + c * b) for a, b in
-               ((-length / 2, -width / 2), (length / 2, -width / 2), (length / 2, width / 2), (-length / 2, width / 2))]
-    bottom, top = [(*p, z0) for p in corners], [(*p, z0 + height) for p in corners]
-    sides = [[bottom[i], bottom[(i + 1) % 4], top[(i + 1) % 4], top[i]] for i in range(4)]
-    return [np.array(f) for f in sides], np.array(top)
+    # .j is the camera.json dict the twin's CameraModel was built from
+    return {"camera": "table", **camera_model(twin.TABLE_CAM).j, "robot_base_xy": [0.0, 0.0]}
 
 
 def render(layout, cam_json, rng):
@@ -74,25 +49,19 @@ def render(layout, cam_json, rng):
 
     # painter's algorithm: far objects first
     for obj in sorted(layout, key=lambda o: -np.linalg.norm(np.array([*o["xy"], surface]) - cam.eye)):
-        (x, y), yaw = obj["xy"], obj["yaw_deg"]
-        if obj["category"] == "cap":
-            ring = [(x + twin.CAP_RADIUS * np.cos(a), y + twin.CAP_RADIUS * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 24)]
-            hull = cv2.convexHull(np.float32([pixel(cam, (*p, z)) for p in ring for z in (surface, surface + twin.CAP_HEIGHT)]))
-            cv2.fillConvexPoly(img, np.round(hull * 16).astype(np.int32), [v * 0.7 for v in BGR["cap"]], cv2.LINE_AA, shift=4)
-            fill([(*p, surface + twin.CAP_HEIGHT) for p in ring], BGR["cap"], 1.0)
-            continue
-        if obj["category"] == "tube":
-            d = 2 * twin.VIAL_RADIUS
-            sides, top = _box_faces(x, y, yaw, twin.VIAL_LENGTH, d, d, surface)
-            colour = BGR["tube"]
-        else:
-            e = twin.CUBE_EDGE
-            sides, top = _box_faces(x, y, yaw, e, e, e, surface)
-            colour = BGR[obj["colour"]]
-        for face in sides:  # back-face culling: draw only sides that face the camera
-            normal = np.cross(face[1] - face[0], face[3] - face[0])
-            if normal @ (cam.eye - face.mean(0)) > 0:
-                fill(face, colour, 0.6)
+        top = outline(obj, surface)  # the same outline the labels are made from
+        bottom = top.copy()
+        bottom[:, 2] = surface
+        colour = BGR[obj["colour"] if obj["category"] == "cube" else obj["category"]]
+        if obj["category"] == "cap":  # an upright cylinder: its side is the hull of both rims
+            hull = cv2.convexHull(np.float32([pixel(cam, p) for p in [*bottom, *top]]))
+            cv2.fillConvexPoly(img, np.round(hull * 16).astype(np.int32), [v * 0.7 for v in colour], cv2.LINE_AA, shift=4)
+        else:  # a box: draw only the sides that face the camera (back-face culling)
+            for i in range(4):
+                face = np.array([bottom[i], bottom[(i + 1) % 4], top[(i + 1) % 4], top[i]])
+                normal = np.cross(face[1] - face[0], face[3] - face[0])
+                if normal @ (cam.eye - face.mean(0)) > 0:
+                    fill(face, colour, 0.6)
         fill(top, colour, 1.0)
 
     gain = rng.uniform(0.75, 1.25) * rng.uniform(0.95, 1.05, 3)  # brightness and white balance

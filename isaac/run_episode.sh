@@ -16,4 +16,5 @@ uv run --project "$ROOT" python -m smartgrasp.deploy --image "$RUN/world_camera.
     --detector "$DETECTOR" --out "$RUN"
 # sort_scene.py exits early when the plan is incomplete; evaluate counts that as a failed episode.
 "$ISAAC/python.sh" "$ROOT/fanuc_er4ia_sim/sort_scene.py" --run "$RUN" --physics-only || true
-test -f "$RUN/execution_report.json" && grep -E '"(task_complete|verified_pickups|verified_placements)"' "$RUN/execution_report.json" || echo "no execution report: see $RUN"
+[ -f "$RUN/execution_report.json" ] || echo "no execution report: see $RUN and the sort_scene log" >&2
+uv run --project "$ROOT" python -m smartgrasp.evaluate episodes "$RUN"

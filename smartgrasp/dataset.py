@@ -23,7 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .geometry import CLASSES, COLOURS, Bev, label_corners, load_homography
+from .geometry import CLASSES, Bev, label_corners, load_homography
 
 
 def split_of(name, val=0.1, test=0.1):
@@ -33,7 +33,7 @@ def split_of(name, val=0.1, test=0.1):
 
 
 def class_id(obj):
-    return COLOURS.index(obj["colour"]) if obj["category"] == "cube" else CLASSES.index(obj["category"])
+    return CLASSES.index(f"cube_{obj['colour']}" if obj["category"] == "cube" else obj["category"])
 
 
 def read_labels(path, size):

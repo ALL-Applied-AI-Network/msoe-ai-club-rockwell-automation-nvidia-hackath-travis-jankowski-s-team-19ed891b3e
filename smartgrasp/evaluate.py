@@ -18,11 +18,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 from .dataset import read_labels
+from .detectors import load_detector
 from .geometry import Bev, fold90, pose, twin
 
-MATCH_MM = 10.0  # a prediction farther than one cube edge from every true cube is a false positive
+MATCH_MM = 1000 * twin.CUBE_EDGE  # a prediction farther than one cube edge from every true cube is a false positive
 
 
 def graspable(xy_error_mm, yaw_error_deg):
@@ -43,7 +45,7 @@ def _stats(values):
 
 def evaluate_perception(dataset, detector, split="test", limit=None):
     dataset, bev = Path(dataset), Bev.load(dataset)
-    matches, missed, false_pos, seconds, images = [], 0, 0, [], 0
+    matches, cubes, predictions, seconds = [], 0, 0, []
     for image_path in sorted((dataset / "images" / split).glob("*.jpg"))[:limit]:
         label = dataset / "labels" / split / f"{image_path.stem}.txt"
         if not label.exists():  # real frames not labelled yet
@@ -54,20 +56,20 @@ def evaluate_perception(dataset, detector, split="test", limit=None):
         found = detector(image)
         seconds.append(time.perf_counter() - start)
         preds = [(d.cls, pose(d.corners, bev)) for d in found if d.cls.startswith("cube_")]
-        images += 1
-        mm = np.array([[1000 * np.linalg.norm(t[1][0] - p[1][0]) for p in preds] for t in truth]).reshape(len(truth), len(preds))
+        cubes += len(truth)
+        predictions += len(preds)
+        true_xy = np.reshape([xy for _, (xy, _) in truth], (-1, 2))  # (0, 2) when empty, as cdist needs
+        pred_xy = np.reshape([xy for _, (xy, _) in preds], (-1, 2))
+        mm = 1000 * cdist(true_xy, pred_xy)
         pairs = [(i, j) for i, j in zip(*linear_sum_assignment(mm)) if mm[i, j] <= MATCH_MM] if mm.size else []
         for i, j in pairs:
             yaw_error = abs(fold90(preds[j][1][1] - truth[i][1][1]))
             matches.append((mm[i, j], yaw_error, truth[i][0] == preds[j][0]))
-        missed += len(truth) - len(pairs)
-        false_pos += len(preds) - len(pairs)
 
-    cubes, predictions = len(matches) + missed, len(matches) + false_pos
     right = [(xy, yaw) for xy, yaw, colour_ok in matches if colour_ok]
     return {
         "split": split,
-        "images": images,
+        "images": len(seconds),
         "cubes": cubes,
         "predictions": predictions,
         "recall": round(len(right) / max(cubes, 1), 4),  # found, right colour, within MATCH_MM
@@ -134,16 +136,15 @@ def main():
     p.add_argument("--detector", required=True, help="yolo:<weights>, hsv or vlm[:<dataset>]")
     p.add_argument("--split", default="test")
     p.add_argument("--limit", type=int, help="evaluate only the first N images (VLM rate limits)")
-    p.add_argument("--save", help="write the metrics JSON here as well")
     e = sub.add_parser("episodes")
     e.add_argument("runs", nargs="+")
     t = sub.add_parser("trials")
     t.add_argument("csv")
+    for s in (p, e, t):
+        s.add_argument("--save", help="write the metrics JSON here as well")
     a = ap.parse_args()
 
     if a.mode == "perception":
-        from .detectors import load_detector
-
         result = {"detector": a.detector, **evaluate_perception(a.dataset, load_detector(a.detector, Bev.load(a.dataset)), a.split, a.limit)}
     elif a.mode == "episodes":
         result = evaluate_episodes(a.runs)
@@ -151,7 +152,7 @@ def main():
         result = evaluate_trials(a.csv)
     text = json.dumps(result, indent=2)
     print(text)
-    if getattr(a, "save", None):
+    if a.save:
         Path(a.save).parent.mkdir(parents=True, exist_ok=True)
         Path(a.save).write_text(text + "\n")
 

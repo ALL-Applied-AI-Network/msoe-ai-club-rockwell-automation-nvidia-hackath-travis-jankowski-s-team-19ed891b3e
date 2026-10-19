@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ import cv2
 import numpy as np
 
 from .dataset import read_labels
-from .geometry import COLOURS, Bev, pose, twin
+from .geometry import COLOURS, Bev, pose
 
 
 @dataclass
@@ -62,15 +63,16 @@ HSV_RANGES = {
 }
 
 
-def colour_blobs(image, colour, min_area, max_area):
-    """Rotated boxes around blobs of one colour, largest first."""
+def colour_blobs(image, colour, bev):
+    """Rotated boxes around cube-sized blobs of one colour, largest first."""
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     mask = np.zeros(hsv.shape[:2], np.uint8)
     for lo, hi in HSV_RANGES[colour]:
         mask |= cv2.inRange(hsv, lo, hi)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     contours = sorted(cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
-    return [cv2.boxPoints(cv2.minAreaRect(c)) for c in reversed(contours) if min_area <= cv2.contourArea(c) <= max_area]
+    top = bev.cube_px**2  # top-face area; caps (yellow) are ~8x larger and drop out
+    return [cv2.boxPoints(cv2.minAreaRect(c)) for c in reversed(contours) if 0.4 * top <= cv2.contourArea(c) <= 3.0 * top]
 
 
 class HsvDetector:
@@ -78,16 +80,15 @@ class HsvDetector:
     and yaw; that is the error a trained model should remove."""
 
     def __init__(self, bev):
-        top = (twin.CUBE_EDGE * 1000 / bev.mm_per_px) ** 2  # top-face area in pixels
-        self.area = (0.4 * top, 3.0 * top)  # caps (yellow) are ~8x larger and drop out
+        self.bev = bev
 
     def __call__(self, image):
-        return [Detection(f"cube_{c}", box, 1.0) for c in COLOURS for box in colour_blobs(image, c, *self.area)]
+        return [Detection(f"cube_{c}", box, 1.0) for c in COLOURS for box in colour_blobs(image, c, self.bev)]
 
 
 class VlmDetector:
     PROMPT = (
-        "Top-down image of a robot work table. Find every small cube (about 20 pixels wide); "
+        "Top-down image of a robot work table. Find every small cube (about PX pixels wide); "
         "cubes are yellow, blue or red. Ignore round caps and long tubes. Reply with JSON only: "
         '[{"bbox_2d": BOX, "label": "red cube"}], coordinates on a 0-1000 grid.'
     )
@@ -101,17 +102,18 @@ class VlmDetector:
         self.key = os.environ.get("NVIDIA_BUILD_API_KEY", "") if "api.nvidia.com" in base else ""
         # Grounding models disagree on box order: Cosmos/Qwen answer [x1, y1, x2, y2], Gemma/Gemini [y1, x1, y2, x2].
         self.yx = os.environ.get("VLM_BOX_ORDER", "yxyx" if "gemma" in self.model else "xyxy") == "yxyx"
-        self.prompt = self.PROMPT.replace("BOX", "[y1, x1, y2, x2]" if self.yx else "[x1, y1, x2, y2]")
-        self.area = HsvDetector(bev).area
-        self.shots = _examples(examples, self.yx) if examples else []
-        if examples and not self.shots:
-            raise SystemExit(f"vlm:{examples}: no labelled images in labels/train")
+        box = "[y1, x1, y2, x2]" if self.yx else "[x1, y1, x2, y2]"
+        self.prompt = self.PROMPT.replace("BOX", box).replace("PX", f"{bev.cube_px:.0f}")
+        self.bev = bev
+        self.shots = []  # worked examples as chat turns, encoded once: the question with its image, then the answer
+        if examples:
+            for image, answer in _examples(examples, self.yx):
+                self.shots += [_user(image, self.prompt), {"role": "assistant", "content": answer}]
+            if not self.shots:
+                raise SystemExit(f"vlm:{examples}: no labelled images in labels/train")
 
     def __call__(self, image):
-        messages = [{"role": "system", "content": "You are a helpful assistant."}]
-        for shot, answer in self.shots:
-            messages += [_user(shot, self.prompt), {"role": "assistant", "content": answer}]
-        messages.append(_user(image, self.prompt))
+        messages = [{"role": "system", "content": "You are a helpful assistant."}, *self.shots, _user(image, self.prompt)]
         body = json.dumps({"model": self.model, "messages": messages, "max_tokens": 2048, "temperature": 0.0})
         headers = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {self.key}"} if self.key else {})
         reply = self._ask(body.encode(), headers)
@@ -139,8 +141,12 @@ class VlmDetector:
                 with urllib.request.urlopen(urllib.request.Request(self.url, body, headers), timeout=300) as r:
                     return json.load(r)["choices"][0]["message"]["content"] or ""
             except (TimeoutError, urllib.error.URLError) as e:
-                if isinstance(e, urllib.error.HTTPError) and e.code < 500:
-                    raise  # a bad key, model name or request: fix the configuration
+                if isinstance(e, urllib.error.HTTPError):
+                    fatal = e.code < 500  # a bad key, model name or request
+                else:  # no such host, or nothing listening there: a wrong VLM_BASE_URL
+                    fatal = isinstance(getattr(e, "reason", None), (socket.gaierror, ConnectionRefusedError))
+                if fatal:
+                    raise  # fix the configuration
                 print(f"[vlm] request {attempt + 1}/{attempts} failed: {e}")
         return None
 
@@ -152,7 +158,7 @@ class VlmDetector:
         pad = 0.5 * max(x2 - x1, y2 - y1)
         x0, y0 = int(max(0, x1 - pad)), int(max(0, y1 - pad))
         crop = image[y0 : int(y2 + pad), x0 : int(x2 + pad)]
-        boxes = colour_blobs(crop, colour, *self.area) if crop.size else []
+        boxes = colour_blobs(crop, colour, self.bev) if crop.size else []
         if boxes:
             return boxes[0] + (x0, y0), 1.0
         return np.array([(x1, y1), (x2, y1), (x2, y2), (x1, y2)]), 0.0
@@ -177,12 +183,13 @@ def _examples(dataset, yx, n=2):
             if cls.startswith("cube_"):
                 (x1, y1), (x2, y2) = c.min(0) / size * 1000, c.max(0) / size * 1000
                 box = (y1, x1, y2, x2) if yx else (x1, y1, x2, y2)
-                answer.append({"bbox_2d": [round(v) for v in box], "label": f"{cls[5:]} cube"})
+                answer.append({"bbox_2d": [round(v) for v in box], "label": f"{cls.removeprefix('cube_')} cube"})
         pairs.append((image, json.dumps(answer)))
     return pairs
 
 
-def _load_dotenv(path=Path(__file__).resolve().parents[1] / ".env"):
+def _load_dotenv():
+    path = Path(__file__).resolve().parents[1] / ".env"
     if path.exists():
         for line in path.read_text().splitlines():
             key, sep, value = line.partition("=")

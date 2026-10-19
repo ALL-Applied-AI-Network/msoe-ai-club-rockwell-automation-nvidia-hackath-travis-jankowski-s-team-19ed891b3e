@@ -23,7 +23,7 @@ import scene_config as twin  # noqa: E402  cell dimensions: the single source of
 from backproject import CameraModel  # noqa: E402  Isaac camera.json -> pinhole model
 
 CLASSES = ["cube_yellow", "cube_blue", "cube_red", "cap", "tube"]
-COLOURS = ["yellow", "blue", "red"]  # cube class ids 0..2, same order as CLASSES
+COLOURS = [c.removeprefix("cube_") for c in CLASSES if c.startswith("cube_")]
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,11 @@ class Bev:
             round((self.y_range[1] - self.y_range[0]) / s),
             round((self.x_range[1] - self.x_range[0]) / s),
         )
+
+    @property
+    def cube_px(self):
+        """A cube's edge length in pixels."""
+        return twin.CUBE_EDGE * 1000 / self.mm_per_px
 
     @property
     def world_to_px(self):

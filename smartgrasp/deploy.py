@@ -51,7 +51,7 @@ def plan_stack(detections, bev):
         if np.hypot(x - twin.CUBE_STACK_XY[0], y - twin.CUBE_STACK_XY[1]) < SITE_CLEAR_M:
             return []
         if d.cls.startswith("cube_") and d.conf >= MIN_CONF and reachable(x, y):
-            free.append(dict(detection_id=i, colour=d.cls[5:], xy=[float(x), float(y)], yaw_deg=float(yaw), conf=float(d.conf)))
+            free.append(dict(detection_id=i, colour=d.cls.removeprefix("cube_"), xy=[float(x), float(y)], yaw_deg=float(yaw), conf=float(d.conf)))
     picks = []
     for colour in twin.CUBE_STACK_COLOURS:
         options = [c for c in free if c["colour"] == colour]
@@ -80,9 +80,23 @@ def plan_stack(detections, bev):
     return picks
 
 
+def sort_plan(picks, detector):
+    """The plan in the twin's format: fanuc_er4ia_sim/sort_scene.py validates and executes it."""
+    return {
+        "source": "SmartGrasp",
+        "detector": detector,
+        "gripper_model": twin.GRIPPER_MODEL,
+        "task": "cube_stack",
+        "stack_colours_bottom_to_top": list(twin.CUBE_STACK_COLOURS),
+        "open_gap_m": 2 * twin.JAW_OPEN,
+        "picks": picks,
+    }
+
+
 CELL_ASSUMPTIONS = (
-    "Targets are UF0 (robot base + 330 mm) with UTOOL1 = (0, 0, 223, 0, 0, 0) and the fingers "
-    "closing along tool Y, so a top-down grasp is W=180, P=0, R=cube yaw. Confirm at CSI before any motion."
+    f"Targets are UF0 (robot base + {1000 * UF0_Z_M:.0f} mm) with "
+    f"UTOOL1 = (0, 0, {1000 * (twin.TOOL_LENGTH - twin.FLANGE_OFFSET):.0f}, 0, 0, 0) "  # faceplate -> fingertip
+    "and the fingers closing along tool Y, so a top-down grasp is W=180, P=0, R=cube yaw. Confirm at CSI before any motion."
 )
 
 
@@ -91,16 +105,16 @@ def cell_rows(picks):
     rows = []
     for p in picks:
         pick, place = (*p["xy"], p["pick_z"]), (*p["place_xy"], p["place_z"])
-        up = lambda xyz: (xyz[0], xyz[1], xyz[2] + APPROACH_M)  # noqa: E731
+        above_pick, above_place = (*p["xy"], p["pick_z"] + APPROACH_M), (*p["place_xy"], p["place_z"] + APPROACH_M)
         for step, (x, y, z), r, gripper in (
-            ("approach", up(pick), p["yaw_deg"], "open"),
+            ("approach", above_pick, p["yaw_deg"], "open"),
             ("descend", pick, p["yaw_deg"], ""),
             ("grip", pick, p["yaw_deg"], "close"),
-            ("lift", up(pick), p["yaw_deg"], ""),
-            ("carry", up(place), p["place_yaw_deg"], ""),
+            ("lift", above_pick, p["yaw_deg"], ""),
+            ("carry", above_place, p["place_yaw_deg"], ""),
             ("lower", place, p["place_yaw_deg"], ""),
             ("release", place, p["place_yaw_deg"], "open"),
-            ("retreat", up(place), p["place_yaw_deg"], ""),
+            ("retreat", above_place, p["place_yaw_deg"], ""),
         ):
             ok = reachable(x, y) and SAFE_Z[0] <= z <= SAFE_Z[1]
             rows.append(dict(
@@ -129,20 +143,11 @@ def deploy(image, calib, detector, out, bev=Bev()):
     bev_img = bev.warp(cv2.imread(str(image)), load_homography(calib, bev))
     detections = load_detector(detector, bev)(bev_img)
     picks = plan_stack(detections, bev)
-    plan = {
-        "source": "SmartGrasp",
-        "detector": detector,
-        "gripper_model": twin.GRIPPER_MODEL,
-        "task": "cube_stack",
-        "stack_colours_bottom_to_top": list(twin.CUBE_STACK_COLOURS),
-        "open_gap_m": 2 * twin.JAW_OPEN,
-        "picks": picks,
-    }
     rows = cell_rows(picks)
     cv2.imwrite(str(out / "bev.png"), bev_img)
     cv2.imwrite(str(out / "overlay.png"), draw(bev_img, detections, picks, bev))
     (out / "detections.json").write_text(json.dumps([d.to_json(bev) for d in detections], indent=2))
-    (out / "sort_plan.json").write_text(json.dumps(plan, indent=2))
+    (out / "sort_plan.json").write_text(json.dumps(sort_plan(picks, detector), indent=2))
     with open(out / "cell_plan.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["step"])
         writer.writeheader()

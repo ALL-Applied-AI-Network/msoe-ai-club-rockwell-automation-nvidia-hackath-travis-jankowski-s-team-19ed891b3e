@@ -51,7 +51,7 @@ def test_cube_label_is_the_true_square_and_pose_round_trips(cam):
     for obj in STACK:
         px = label_corners(obj, cam_json, H, BEV)
         sides = np.linalg.norm(np.roll(px, -1, 0) - px, axis=1)
-        assert np.allclose(sides, twin.CUBE_EDGE * 1000 / BEV.mm_per_px, atol=1e-6)  # 20 px
+        assert np.allclose(sides, BEV.cube_px, atol=1e-6)  # 20 px
         xy, yaw = pose(px, BEV)
         assert np.allclose(xy, obj["xy"], atol=1e-9)
         assert abs(fold90(yaw - obj["yaw_deg"])) < 1e-4
@@ -83,7 +83,7 @@ def test_plan_passes_the_twins_own_validator(cam):
     from sort_scene import validate_plan  # fanuc_er4ia_sim/sort_scene.py
 
     picks = deploy.plan_stack(oracle(STACK, json.loads(cam.read_text()), load_homography(cam, BEV)), BEV)
-    validate_plan({"source": "SmartGrasp", "open_gap_m": 2 * twin.JAW_OPEN, "task": "cube_stack", "picks": picks})
+    validate_plan(deploy.sort_plan(picks, "oracle"))  # exactly what deploy writes to sort_plan.json
     assert [p["colour"] for p in picks] == list(twin.CUBE_STACK_COLOURS)
     rows = deploy.cell_rows(picks)
     assert len(rows) == 8 * 6 and all(r["within_limits"] for r in rows)
