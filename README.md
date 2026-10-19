@@ -78,7 +78,7 @@ a failed grasp, and cycle time per pick. All three come from `evaluate trials` (
 logged in [docs/trials_template.csv](docs/trials_template.csv)). `evaluate episodes` (sim) gives
 grasp and placement success only:
 - The twin's scripted motion takes the same time for every pick, so it has no cycle time to measure.
-- Recovery stays empty until ROADMAP task 10 adds retries.
+- Recovery stays empty until retries land ([#57](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-travis-jankowski-s-team-19ed891b3e/issues/57)).
 `evaluate perception` adds recall, position and yaw error, and a **graspable rate**:
 the share of cubes perceived well enough for the 12 mm gripper to close on them
 (`graspable()` in `smartgrasp/evaluate.py`).
@@ -105,7 +105,7 @@ Each detector then ran 10 closed-loop episodes in the twin (`isaac/run_episode.s
 What this shows:
 - **Grasping is easy and stacking is hard.** The gripper tolerates a few millimetres when closing on a cube, so both detectors grasp reliably. A six-cube tower does not tolerate that error: HSV's ~3 mm builds up until a placement fails.
 - **HSV is biased.** Its colour blob includes the cube's visible side faces, which pulls the centre about 3 mm away from the camera. YOLO learned the top face from exact labels.
-- **VLMs find cubes better than HSV but place them no better.** `VlmDetector` refines each box with the same colour blob, so it inherits HSV's position error. See ROADMAP task 8.
+- **VLMs find cubes better than HSV but place them no better.** `VlmDetector` refines each box with the same colour blob, so it inherits HSV's position error. See [#48](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-travis-jankowski-s-team-19ed891b3e/issues/48).
 - **Hosted VLMs are slow and flaky.** `nvidia/nemotron-3.5-super-vl-120b-a12b` answered only 8 of 20 images: the rest were HTTP 500 server errors. Its answered images looked as accurate as Gemma's. No Qwen3.8 model is hosted on build.nvidia.com.
 - **These are sim numbers.** Isaac renders have no printed mat yet (see Known limits). Real-cell numbers come from `evaluate trials`.
 
@@ -132,7 +132,7 @@ uvx --from huggingface_hub hf upload <org>/smartgrasp-models artifacts/models/si
 smartgrasp/          host package, one module per stage (geometry, scene, dataset, detectors, train, evaluate, deploy, calibrate)
 isaac/               scripts for Isaac Sim's Python: data generation and closed-loop episodes
 tests/               pytest suite and the OpenCV fake twin
-docs/                CELL_TEST.md (CSI procedure), ROADMAP.md (team tasks), trials_template.csv
+docs/                CELL_TEST.md (CSI procedure), trials_template.csv
 fanuc_er4ia_sim/     the organisers' calibrated twin (see its README); SmartGrasp reads its geometry
 ```
 
@@ -143,6 +143,8 @@ The twin has three small SmartGrasp patches:
 
 ## Contributing
 
+Team tasks live in [GitHub issues](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-travis-jankowski-s-team-19ed891b3e/issues). Start at the goal, [#3](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-travis-jankowski-s-team-19ed891b3e/issues/3): it links every epic, and each epic lists its stories with a difficulty level from 🟢 L0 (no code) to 🔴 L4 (ML research). Comment on a story to claim it.
+
 `main` should always pass `make test`. GitHub can't enforce this on our plan, so we keep it by habit:
 
 1. Branch from an up-to-date `main`, one branch per change:
@@ -150,7 +152,7 @@ The twin has three small SmartGrasp patches:
    git switch main && git pull && git switch -c <your-name>/<short-topic>
    ```
 2. Run `make test` before you push. If you changed a pipeline stage, also run `make smoke` or the Isaac equivalent.
-3. Push the branch and open a pull request into `main`. Say what changed and, for experiments, which number moved (ROADMAP: one factor at a time).
+3. Push the branch and open a pull request into `main`. Say what changed and, for experiments, which number moved (one factor at a time).
 4. Get **one approving review** from a teammate or the mentor, then merge. Never push to `main` directly.
 
 Don't commit data, weights, `.env` or keys (see [AGENTS.md](AGENTS.md)).
@@ -158,7 +160,7 @@ Don't commit data, weights, `.env` or keys (see [AGENTS.md](AGENTS.md)).
 ## Known limits
 
 - **Isaac verified on one machine.** `isaac/generate_data.py` and `run_episode.sh` ran on a Brev L40S with Isaac Sim 6.0.1 on 2026-10-19 ([docs/COMPUTE.md](docs/COMPUTE.md)).
-- **Data generation is simplified.** It hides the robot arm and randomizes only object layout and lighting. Camera jitter, materials and lens distortion are ROADMAP task 7.
+- **Data generation is simplified.** It hides the robot arm and randomizes only object layout and lighting. Camera jitter, materials and sensor noise are the stories of epic [#7](https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-travis-jankowski-s-team-19ed891b3e/issues/7).
 - **No printed mat in the renders.** The organisers' twin ships "media-free": the scan of the real table mat (`fanuc_er4ia_sim/assets/mat_print.png`) is not included, so Isaac renders show a plain mat. This is the largest known sim-to-real gap. Ask the organisers for the file, or photograph the mat at CSI.
 - **Cubes on the table only.** The top-down view is calibrated for cubes on the table. Stacked cubes sit higher and appear shifted, so `deploy` plans nothing while anything is detected near the stack site. Clear the tower before re-capturing.
 - **Reach.** `deploy` drops cubes farther than 0.54 m from the robot base: the twin's IK cannot hover top-down beyond that.

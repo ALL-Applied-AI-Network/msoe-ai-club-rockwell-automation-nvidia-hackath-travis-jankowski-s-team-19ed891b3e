@@ -88,7 +88,7 @@ class EpisodeMetrics(TypedDict):
         attempted_picks: Picks the executor attempted across all episodes.
         first_attempt_grasp_success: Share of attempted picks that lifted the cube.
         placement_success: Share of attempted picks that placed the cube correctly.
-        recovery_rate: Always None: the baseline never retries a failed grasp (ROADMAP task 10).
+        recovery_rate: Always None: the baseline never retries a failed grasp (issue #57).
     """
 
     episodes: int
