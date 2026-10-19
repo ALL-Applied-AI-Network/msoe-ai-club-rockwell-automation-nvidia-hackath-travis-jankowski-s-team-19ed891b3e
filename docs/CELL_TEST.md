@@ -21,6 +21,7 @@ whatever interface the cell already uses. Book time in `#data-and-testbed-reques
 5. Cameras: model, resolution, lens, and how to grab frames (USB, GigE, RTSP, iRVision). Which overhead camera is closest to the twin's table camera?
 6. Safety: speed override for student runs, who holds the E-stop, agreed home pose, DCS limits.
 7. Which objects are really on the table (cube size and colours, caps, tubes).
+8. Can we have the twin's mat artwork (`assets/mat_print.png`, left out of the starter package)? If not, photograph the mat flat and square so ROADMAP task 7 can texture it.
 
 ## 2. Calibrate the table camera (about 30 minutes)
 

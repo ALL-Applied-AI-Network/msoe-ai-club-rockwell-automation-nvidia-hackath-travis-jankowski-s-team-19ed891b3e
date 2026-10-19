@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,8 +114,9 @@ class VlmDetector:
         messages.append(_user(image, self.prompt))
         body = json.dumps({"model": self.model, "messages": messages, "max_tokens": 2048, "temperature": 0.0})
         headers = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {self.key}"} if self.key else {})
-        with urllib.request.urlopen(urllib.request.Request(self.url, body.encode(), headers), timeout=300) as r:
-            reply = json.load(r)["choices"][0]["message"]["content"] or ""
+        reply = self._ask(body.encode(), headers)
+        if reply is None:
+            return []
         try:
             items = json.loads(re.search(r"\[.*\]", reply, re.S).group(0))
         except (AttributeError, ValueError):
@@ -128,6 +130,19 @@ class VlmDetector:
                 box = np.array(item["bbox_2d"], float)[[1, 0, 3, 2] if self.yx else [0, 1, 2, 3]] / 1000 * (w, h, w, h)
                 out.append(Detection(f"cube_{colour}", *self._fit(image, colour, *box)))
         return out
+
+    def _ask(self, body, headers, attempts=2):
+        """POST the chat request. A timeout or server error is retried once; after that the
+        image counts as no detections, so one flaky call does not end a whole evaluation."""
+        for attempt in range(attempts):
+            try:
+                with urllib.request.urlopen(urllib.request.Request(self.url, body, headers), timeout=300) as r:
+                    return json.load(r)["choices"][0]["message"]["content"] or ""
+            except (TimeoutError, urllib.error.URLError) as e:
+                if isinstance(e, urllib.error.HTTPError) and e.code < 500:
+                    raise  # a bad key, model name or request: fix the configuration
+                print(f"[vlm] request {attempt + 1}/{attempts} failed: {e}")
+        return None
 
     def _fit(self, image, colour, x1, y1, x2, y2):
         """VLMs localise but cannot measure yaw: fit a rotated box to the colour blob in their box.

@@ -56,7 +56,7 @@ does **not** make a model that sees real cubes: that takes Isaac renders.
 
 ## Full pipeline
 
-On the Isaac machine, first set `export ISAAC=/isaac-sim` (the Brev launchable's path; use your install's).
+Setting up Brev or the MSOE GB10: [docs/COMPUTE.md](docs/COMPUTE.md). On the Isaac machine, first set `export ISAAC=/isaac-sim` (the Brev launchable's path; use your install's).
 
 | Step | Command | Where it runs |
 |---|---|---|
@@ -85,22 +85,33 @@ the share of cubes perceived well enough for the 12 mm gripper to close on them
 
 ## Results
 
-The full pipeline was verified on an Apple M5 Pro on 2026-10-16 with the fake twin: 400 frames, YOLO26n-OBB for 30 epochs, test split of 47 images and 278 cubes. These numbers prove the pipeline end to end; they are not sim-to-real results. Replace them with Isaac and real-cell numbers as the team produces them.
+### Isaac twin (Brev L40S, 2026-10-19)
 
-| Detector | Recall | XY error p50 / p95 (mm) | Yaw error p50 / p95 (°) | Graspable | ms / image |
-|---|---|---|---|---|---|
-| `hsv` (no training) | 0.989 | 2.43 / 3.35 | 0.88 / 4.64 | 0.273 | 5 |
-| `yolo` (fake-twin trained) | 1.000 | 0.12 / 0.24 | 1.21 / 3.67 | 0.996 | 85-160 |
-| `vlm` (Gemma 4 31B zero-shot, first 3 images only) | 1.000 | 2.15 / 3.31 | 0.82 / 5.57 | 0.353 | ~100,000 |
+The data is 3,000 Isaac Sim 6.0.1 renders (`--seed 1`): 2,439 train, 310 val and 251 test images. YOLO26n-OBB was trained for 100 epochs (38 min on an L40S). Perception was scored on the test split: 251 images, 1,491 cubes.
 
-Read the table like this:
-- **HSV is biased.** Its colour blob includes the cube's visible side faces, which pulls the centre about 2 mm away from the camera.
-- **The VLM inherits that bias.** It refines its boxes with the same blob, so it finds every cube but places them no better than HSV.
-- **YOLO avoids it.** It learned the top face from exact labels.
-- **The hosted VLM is too slow for the pick loop.** Each image took 1.5-2 minutes on the free endpoint.
-- **ONNX works too.** The exported `best.onnx` scored the same as `best.pt` (p95 XY 0.23 vs 0.24 mm in an earlier run).
+| Detector | Recall | Precision | XY error p50 / p95 (mm) | Yaw error p50 / p95 (°) | Graspable | Time / image |
+|---|---|---|---|---|---|---|
+| `yolo` (Isaac-trained) | **1.000** | **1.000** | **0.16 / 0.37** | 1.58 / 4.75 | **0.993** | 11 ms (L40S) |
+| `hsv` (no training) | 0.875 | 0.838 | 2.81 / 3.87 | 3.01 / 14.18 | 0.093 | 9 ms |
+| `vlm` Gemma 4 31B, zero-shot, 20 images | 0.967 | 0.983 | 3.09 / 5.76 | 2.94 / 16.73 | 0.091 | ~69 s (hosted) |
 
-`deploy` with the YOLO model on a separate stacking frame planned all 6 picks within 0.23 mm and 3.2° of the truth. The twin's `validate_plan` accepted the plan, and every cell waypoint was within limits.
+Each detector then ran 10 closed-loop episodes in the twin (`isaac/run_episode.sh`, seeds 1-10, the same layouts for both):
+
+| Detector | Towers completed | First-attempt grasp success | Placement success |
+|---|---|---|---|
+| `yolo` | **9 / 10** | 98.3% | **98.3%** |
+| `hsv` | 3 / 10 | 98.0% | 88.2% |
+
+What this shows:
+- **Grasping is easy and stacking is hard.** The gripper tolerates a few millimetres when closing on a cube, so both detectors grasp reliably. A six-cube tower does not tolerate that error: HSV's ~3 mm builds up until a placement fails.
+- **HSV is biased.** Its colour blob includes the cube's visible side faces, which pulls the centre about 3 mm away from the camera. YOLO learned the top face from exact labels.
+- **VLMs find cubes better than HSV but place them no better.** `VlmDetector` refines each box with the same colour blob, so it inherits HSV's position error. See ROADMAP task 8.
+- **Hosted VLMs are slow and flaky.** `nvidia/nemotron-3.5-super-vl-120b-a12b` answered only 8 of 20 images: the rest were HTTP 500 server errors. Its answered images looked as accurate as Gemma's. No Qwen3.8 model is hosted on build.nvidia.com.
+- **These are sim numbers.** Isaac renders have no printed mat yet (see Known limits). Real-cell numbers come from `evaluate trials`.
+
+### Fake twin (Apple M5 Pro, 2026-10-16)
+
+`make smoke` proves the plumbing on a laptop: 400 OpenCV frames, 30 epochs, 47 test images and 278 cubes. YOLO scored recall 1.000, XY 0.12 / 0.24 mm and graspable 0.996. HSV scored 0.989, 2.43 / 3.35 mm and 0.273. The exported `best.onnx` scored the same as `best.pt`.
 
 ## Saving datasets and models
 
@@ -132,8 +143,9 @@ The twin has three small SmartGrasp patches:
 
 ## Known limits
 
-- **Isaac scripts not yet run.** `isaac/generate_data.py` and `run_episode.sh` follow the Isaac Sim 6.0.1 APIs and the twin's own capture code, but have not run on a GPU yet (ROADMAP task 1). Everything on the host is tested.
+- **Isaac verified on one machine.** `isaac/generate_data.py` and `run_episode.sh` ran on a Brev L40S with Isaac Sim 6.0.1 on 2026-10-19 ([docs/COMPUTE.md](docs/COMPUTE.md)).
 - **Data generation is simplified.** It hides the robot arm and randomizes only object layout and lighting. Camera jitter, materials and lens distortion are ROADMAP task 7.
+- **No printed mat in the renders.** The organisers' twin ships "media-free": the scan of the real table mat (`fanuc_er4ia_sim/assets/mat_print.png`) is not included, so Isaac renders show a plain mat. This is the largest known sim-to-real gap. Ask the organisers for the file, or photograph the mat at CSI.
 - **Cubes on the table only.** The top-down view is calibrated for cubes on the table. Stacked cubes sit higher and appear shifted, so `deploy` plans nothing while anything is detected near the stack site. Clear the tower before re-capturing.
 - **Reach.** `deploy` drops cubes farther than 0.54 m from the robot base: the twin's IK cannot hover top-down beyond that.
 - **Cell plan assumptions.** `cell_plan.csv` assumes UTOOL1 = (0, 0, 223, 0, 0, 0) with the fingers closing along tool Y. Confirm both at CSI.
