@@ -141,6 +141,20 @@ The twin has three small SmartGrasp patches:
 - `capture_scene.py --scale`.
 - `sort_scene.py` accepts plans whose `source` is `SmartGrasp`.
 
+## Contributing
+
+`main` should always pass `make test`. GitHub can't enforce this on our plan, so we keep it by habit:
+
+1. Branch from an up-to-date `main`, one branch per change:
+   ```bash
+   git switch main && git pull && git switch -c <your-name>/<short-topic>
+   ```
+2. Run `make test` before you push. If you changed a pipeline stage, also run `make smoke` or the Isaac equivalent.
+3. Push the branch and open a pull request into `main`. Say what changed and, for experiments, which number moved (ROADMAP: one factor at a time).
+4. Get **one approving review** from a teammate or the mentor, then merge. Never push to `main` directly.
+
+Don't commit data, weights, `.env` or keys (see [AGENTS.md](AGENTS.md)).
+
 ## Known limits
 
 - **Isaac verified on one machine.** `isaac/generate_data.py` and `run_episode.sh` ran on a Brev L40S with Isaac Sim 6.0.1 on 2026-10-19 ([docs/COMPUTE.md](docs/COMPUTE.md)).
