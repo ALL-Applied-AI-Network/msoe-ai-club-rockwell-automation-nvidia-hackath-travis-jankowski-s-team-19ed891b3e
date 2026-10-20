@@ -210,14 +210,39 @@ def pixel(cam: CameraModel, point: ArrayLike) -> FloatArray:
     return cam.project(point) - 0.5
 
 
+def cell_homography(table: CameraJson, bev: Bev = Bev()) -> Homography:
+    """Fit the real table camera's homography from the organisers' calibration.
+
+    The organisers' model (cameras.json "model") is a pinhole with one radial term k1, in the
+    robot base frame, with OpenCV pixels as their ArUco solve uses. A homography cannot hold the
+    radial term, so it is fitted by least squares over a 1 cm grid of the BEV: within 0.2 mm.
+
+    Args:
+        table: The "table" entry of the client package's calibration/cameras.json.
+        bev: View whose area the grid covers.
+
+    Returns:
+        3x3 homography taking image pixels to robot-base metres on the cube-top plane.
+    """
+    xs, ys = np.meshgrid(np.linspace(*bev.x_range, 41), np.linspace(*bev.y_range, 65))
+    base = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, twin.SURFACE_DZ + twin.CUBE_EDGE)], axis=1)
+    base_to_cam = np.linalg.inv(np.array(table["T_base_cam"], float))
+    in_cam = base @ base_to_cam[:3, :3].T + base_to_cam[:3, 3]
+    xy = in_cam[:, :2] / in_cam[:, 2:]
+    xy *= 1 + table["k1"] * (xy**2).sum(axis=1, keepdims=True)
+    width, height = table["size"]
+    return fit_homography(table["fx"] * xy + (width / 2, height / 2), base[:, :2])
+
+
 def load_homography(path: str | Path, bev: Bev = Bev()) -> Homography:
     """Fit the homography from image pixels to robot-base XY on the cube-top plane.
 
     Accepts a sim camera.json (written by Isaac capture/generation), fitted through the BEV
-    corners, or a real calib.json (written by smartgrasp.calibrate), which stores "H" directly.
+    corners; a real calib.json (written by smartgrasp.calibrate), which stores "H" directly; or
+    the organisers' calibration/cameras.json for the real cell, fitted by cell_homography.
 
     Args:
-        path: camera.json or calib.json.
+        path: camera.json, calib.json or cameras.json.
         bev: View whose corners anchor the fit for a sim camera.
 
     Returns:
@@ -229,6 +254,8 @@ def load_homography(path: str | Path, bev: Bev = Bev()) -> Homography:
     camera: CameraJson = json.loads(Path(path).read_text())
     if "H" in camera:
         return np.array(camera["H"], float)
+    if "table" in camera:
+        return cell_homography(camera["table"], bev)
     cam, cube_top_z = CameraModel(camera), camera["table_top_z"] + twin.CUBE_EDGE
     corners_xy = [(x, y) for x in bev.x_range for y in bev.y_range]
     return fit_homography([pixel(cam, (x, y, cube_top_z)) for x, y in corners_xy], corners_xy)

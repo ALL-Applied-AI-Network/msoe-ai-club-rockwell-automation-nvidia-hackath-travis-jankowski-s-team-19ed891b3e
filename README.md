@@ -5,8 +5,8 @@ up somewhere unexpected. SmartGrasp gives the FANUC ER-4iA at UWM's Connected
 Systems Institute (CSI) eyes. It trains a small detector **only on synthetic
 images from the cell's digital twin**, finds each cube's position and rotation
 from one overhead camera frame, and plans top-down grasps that stack the cubes.
-The same plan runs in the Isaac Sim twin and becomes a reviewed dry-run target
-list for the real cell.
+The same plan runs in the Isaac Sim twin and, through the organisers' remote
+test service, on the real arm.
 
 Team project for the Rockwell Automation + NVIDIA Physical AI hackathon, Fall 2026
 (Dataset 3: Grasping and Sorting). Event pages are linked [below](#hackathon).
@@ -21,7 +21,7 @@ flowchart LR
     C[camera frame<br/>sim or real] --> DP[deploy<br/>detect + plan]
     M --> DP
     DP -->|sort_plan.json| S[twin executes<br/>sort_scene.py] --> EP[evaluate episodes]
-    DP -->|cell_plan.csv| O[CSI operator reviews<br/>and runs] --> TL[evaluate trials]
+    DP -->|tcp targets| P[policy.py on the<br/>organisers' CSI cell] --> TL[evaluate trials]
 ```
 
 **One idea makes the pipeline small.** Every model sees the same kind of image:
@@ -30,7 +30,7 @@ pixel, made by warping the camera frame with a homography.
 
 - A cube's top face is always a 20×20 px square.
 - A box's centre *is* the robot XY, and its angle *is* the grasp yaw.
-- A sim camera and a real camera differ only in their homography. The sim's comes from the twin; the real one comes from a 30-minute calibration ([docs/CELL_TEST.md](docs/CELL_TEST.md)).
+- A sim camera and a real camera differ only in their homography. The sim's comes from the twin; the real one is fitted to the organisers' published calibration ([docs/CELL_TEST.md](docs/CELL_TEST.md)).
 
 Three detectors share one interface (`smartgrasp/detectors.py`). They are measured by the same evaluator:
 
@@ -66,7 +66,7 @@ Setting up Brev or the MSOE GB10: [docs/COMPUTE.md](docs/COMPUTE.md). On the Isa
 | 3. Train | `uv run python -m smartgrasp.train data/bev/sim_v1 --name sim_v1 --epochs 100` | CUDA (Brev, Spark, Rosie) or `--device mps` on a Mac for small runs |
 | 4. Evaluate perception | `uv run python -m smartgrasp.evaluate perception data/bev/sim_v1 --detector yolo:artifacts/models/sim_v1/weights/best.pt` (repeat with `hsv`, `vlm`) | anywhere; `vlm` needs `.env` (copy `.env.example`) |
 | 5. Closed-loop sim | `isaac/run_episode.sh 7 runs/episodes/seed7 yolo:artifacts/models/sim_v1/weights/best.pt`, then `uv run python -m smartgrasp.evaluate episodes runs/episodes/*` | Isaac machine with uv |
-| 6. Real cell | `calibrate`, then `deploy` on a real frame, then `evaluate trials`; see [docs/CELL_TEST.md](docs/CELL_TEST.md) | laptop at CSI |
+| 6. Real cell | `run.py --mock` in the organisers' client, then a booked slot running `smartgrasp.policy`, then `evaluate trials`; see [docs/CELL_TEST.md](docs/CELL_TEST.md) | any laptop, remotely |
 
 Each `deploy` writes:
 - `overlay.png`: what was found.
@@ -164,7 +164,7 @@ Don't commit data, weights, `.env` or keys (see [AGENTS.md](AGENTS.md)).
 - **No printed mat in the renders.** The organisers' twin ships "media-free": the scan of the real table mat (`fanuc_er4ia_sim/assets/mat_print.png`) is not included, so Isaac renders show a plain mat. This is the largest known sim-to-real gap. Ask the organisers for the file, or photograph the mat at CSI.
 - **Cubes on the table only.** The top-down view is calibrated for cubes on the table. Stacked cubes sit higher and appear shifted, so `deploy` plans nothing while anything is detected near the stack site. Clear the tower before re-capturing.
 - **Reach.** `deploy` drops cubes farther than 0.54 m from the robot base: the twin's IK cannot hover top-down beyond that.
-- **Cell plan assumptions.** `cell_plan.csv` assumes UTOOL1 = (0, 0, 223, 0, 0, 0) with the fingers closing along tool Y. Confirm both at CSI.
+- **Real-cell motion is unproven.** `smartgrasp.policy` passes the organisers' mock, which checks formats, limits and timing only. It plans once per rollout, moves at 80 mm/s, and does not retry a failed grasp.
 - **Cosmos 3 access.** The hosted Cosmos 3 endpoint on build.nvidia.com returned 404 on 2026-10-16, so `vlm` defaults to Gemma 4 there. Self-host Cosmos3-Nano with vLLM for the Cosmos comparison.
 - **Ultralytics licence.** Ultralytics is AGPL-3.0, so trained weights are AGPL too. That is fine for this open academic project. Swap in RF-DETR (Apache-2.0) if a sponsor needs a closed licence.
 
