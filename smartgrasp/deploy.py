@@ -9,8 +9,9 @@ Writes into --out:
     sort_plan.json          the plan in the twin's format: fanuc_er4ia_sim/sort_scene.py executes it
     cell_plan.csv/.json     the same plan as FANUC UF0/UTOOL1 XYZWPR targets for operator review
 
-Nothing here talks to a robot controller. The real-cell plan is a dry run for a
-human to check; the cell's own safety systems stay in charge.
+deploy itself never talks to a robot controller: cell_plan.csv is for a human to check.
+smartgrasp.policy streams the same rows to the organisers' cell, which checks every target
+against its limits while an operator supervises.
 """
 
 import argparse
@@ -23,8 +24,8 @@ from typing import TypedDict
 import cv2
 import numpy as np
 
-from .detectors import Detection, load_detector
-from .geometry import Bev, BgrColour, Category, Image, load_homography, pose, read_image, twin
+from .detectors import Detection, Detector, load_detector
+from .geometry import Bev, BgrColour, Category, Homography, Image, load_homography, pose, read_image, twin
 
 MIN_CONF: float = 0.8  # the twin's executor refuses grasps below this pose confidence
 REACH: tuple[tuple[float, float], tuple[float, float]] = ((0.18, 0.52), (-0.28, 0.30))  # x, y box, robot-base metres
@@ -416,14 +417,44 @@ def _write_cell_plan(out_dir: Path, rows: list[CellRow]) -> None:
     (out_dir / "cell_plan.json").write_text(json.dumps(cell_plan, indent=2))
 
 
-def deploy(
-    image: str | Path, calib: str | Path, detector: str, out: str | Path, bev: Bev = Bev()
+def plan_frame(
+    camera_image: Image, H: Homography, detector: Detector, detector_name: str, out: str | Path, bev: Bev = Bev()
 ) -> tuple[list[Detection], list[Pick], list[CellRow]]:
     """Detect cubes in one camera frame, plan the tower and write every output file into out.
 
     Args:
+        camera_image: Table camera frame (BGR) at the size H was made for.
+        H: Homography from that camera's pixels to robot-base XY on the cube-top plane.
+        detector: Detector built by load_detector for this view.
+        detector_name: Its spec, recorded in sort_plan.json.
+        out: Output folder; created if missing.
+        bev: View to detect in.
+
+    Returns:
+        (detections in BEV pixels, picks for the twin, FANUC rows for the real cell).
+    """
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bev_img = bev.warp(camera_image, H)
+    detections = detector(bev_img)
+    picks = plan_stack(detections, bev)
+    rows = cell_rows(picks)
+    cv2.imwrite(str(out_dir / "bev.png"), bev_img)
+    cv2.imwrite(str(out_dir / "overlay.png"), draw(bev_img, detections, picks, bev))
+    (out_dir / "detections.json").write_text(json.dumps([d.to_json(bev) for d in detections], indent=2))
+    (out_dir / "sort_plan.json").write_text(json.dumps(sort_plan(picks, detector_name), indent=2))
+    _write_cell_plan(out_dir, rows)
+    return detections, picks, rows
+
+
+def deploy(
+    image: str | Path, calib: str | Path, detector: str, out: str | Path, bev: Bev = Bev()
+) -> tuple[list[Detection], list[Pick], list[CellRow]]:
+    """Read one camera frame and its calibration, then run plan_frame on them.
+
+    Args:
         image: Table camera frame.
-        calib: Sim camera.json or real calib.json for that camera.
+        calib: Sim camera.json, real calib.json or the organisers' cameras.json for that camera.
         detector: Detector spec for load_detector: yolo:<weights>, hsv or vlm[:<dataset>].
         out: Output folder; created if missing.
         bev: View to detect in.
@@ -434,25 +465,15 @@ def deploy(
     Raises:
         FileNotFoundError: If the image cannot be read.
     """
-    out_dir = Path(out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    bev_img = bev.warp(read_image(image), load_homography(calib, bev))
-    detections = load_detector(detector, bev)(bev_img)
-    picks = plan_stack(detections, bev)
-    rows = cell_rows(picks)
-    cv2.imwrite(str(out_dir / "bev.png"), bev_img)
-    cv2.imwrite(str(out_dir / "overlay.png"), draw(bev_img, detections, picks, bev))
-    (out_dir / "detections.json").write_text(json.dumps([d.to_json(bev) for d in detections], indent=2))
-    (out_dir / "sort_plan.json").write_text(json.dumps(sort_plan(picks, detector), indent=2))
-    _write_cell_plan(out_dir, rows)
-    return detections, picks, rows
+    H = load_homography(calib, bev)
+    return plan_frame(read_image(image), H, load_detector(detector, bev), detector, out, bev)
 
 
 def main() -> None:
     """Run deploy from the command line and print the cell plan for operator review."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", required=True, help="table camera frame")
-    parser.add_argument("--calib", required=True, help="sim camera.json or real calib.json")
+    parser.add_argument("--calib", required=True, help="sim camera.json, real calib.json or cell cameras.json")
     parser.add_argument("--detector", required=True, help="yolo:<weights>, hsv or vlm[:<dataset>]")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()

@@ -17,7 +17,7 @@ User instructions take precedence over this file.
 - **Ground truth is for evaluation.** It never feeds a detector, a plan or a motion command.
 - **One perception space.** Every detector takes a BEV image (`geometry.Bev`) and returns `Detection`s with corners in BEV pixels. Add new detectors in `detectors.py` behind `load_detector`.
 - **The twin's validator is the contract for plans.** A full six-cube `deploy.plan_stack` must keep passing `fanuc_er4ia_sim/sort_scene.validate_plan` (`tests/test_smartgrasp.py`).
-- **No code here commands the real robot.** `cell_plan.csv` is a dry run for a human. Do not add controller communication without the mentor's explicit approval.
+- **Only `smartgrasp/policy.py` moves the real robot, and only through the organisers' cell client** ([docs/CELL_TEST.md](docs/CELL_TEST.md)). That cell checks every target against its limits, and an operator supervises every rollout. `deploy`'s `cell_plan.csv` stays a dry run for a human. Do not add any other controller communication, and do not submit a cell request or book a slot, without the mentor's explicit approval.
 - **Never commit** `data/`, `artifacts/`, `runs/`, weights, `.env` or API keys.
 - **Less code is better.** Prefer a parameter or a small function over a new module or framework.
 
